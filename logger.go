@@ -1,69 +1,122 @@
 package logger
 
 import (
-	"context"
 	"log"
+	"log/syslog"
 	"net/http"
+	"os"
+	"reflect"
 	"sync"
 	"time"
+
+	"github.com/go-stack/stack"
 )
 
-type contextKey string
-
-type logEntry struct {
-	sync.Mutex
-	m map[*http.Request]map[string]interface{}
+type LoggerConfig struct {
+	SysWrite bool
 }
 
-const (
-	loggerCtx contextKey = "request_logger"
-)
-
 var (
-	entry logEntry
+	mlog  *log.Logger
+	mutex sync.RWMutex
+	data  = make(map[*http.Request]map[string]interface{})
 )
 
-func RequestLogger(next http.Handler) http.Handler {
+func init() {
+	mlog = log.New(os.Stdout, "", 0)
+}
+
+func (c *LoggerConfig) RequestLogger(next http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 
-		logEntry := initRequestLogger(r)
-		ww := &ResponseWriterWrapper{0, 0, w}
+		initRequestLogger(r)
+		ww := &responseWriterWrapper{0, 0, w}
 		t1 := time.Now()
-		log.Print(logEntry)
 
-		next.ServeHTTP(ww, withLogEntry(r, logEntry))
+		next.ServeHTTP(ww, r)
 
 		t2 := time.Now()
-		finilizeRequestLogger(r, ww.Status(), ww.Size(), t2.Sub(t1))
+		finilizeRequestLogger(r, c.SysWrite, ww.Status(), ww.Size(), t2.Sub(t1))
+		clear(r)
 	}
 	return http.HandlerFunc(fn)
 }
 
-func withLogEntry(r *http.Request, e logEntry) *http.Request {
-	r = r.WithContext(context.WithValue(r.Context(), loggerCtx, e))
-	return r
+func initRequestLogger(r *http.Request) {
+	mutex.Lock()
+	data[r] = make(map[string]interface{})
+	mutex.Unlock()
 }
 
-func getLogEntry(r *http.Request) logEntry {
-	e, _ := r.Context().Value(loggerCtx).(logEntry)
-	return e
+func Log(r *http.Request, values ...interface{}) {
+	mutex.Lock()
+	if data[r] == nil {
+		// if the log wasn't initialized, burn it all to hell...
+		return
+	}
+	dataMap := mapify(values)
+	for k, v := range dataMap {
+		data[r][k] = v
+	}
+	data[r]["file"] = stack.Caller(1)
+	mutex.Unlock()
 }
 
-func initRequestLogger(r *http.Request) logEntry {
-	log.Print("initReqLog")
-	entry.m = make(map[*http.Request]map[string]interface{})
-	entry.m[r] = make(map[string]interface{})
-	entry.m[r]["url"] = r.URL.String()
-	entry.m[r]["method"] = r.Method
-	log.Printf("%+v", entry.m)
-	return entry
+func finilizeRequestLogger(r *http.Request, sysWrite bool, status int, size int, elapsed time.Duration) {
+	mutex.Lock()
+	if data[r] == nil {
+		// if the log wasn't initialized, burn it all to hell...
+		return
+	}
+
+	rMap := make(map[string]interface{})
+	rMap["method"] = r.Method
+	rMap["url"] = r.URL.String()
+	rMap["status"] = status
+	rMap["size"] = size
+	rMap["duration"] = elapsed
+	// print stuff out
+	if sysWrite {
+		byteMessage := formatSyslog(rMap, data[r])
+		// check status to assume priority
+		var prio syslog.Priority
+		switch {
+		case status < 400:
+			prio = syslog.LOG_INFO
+		case status < 500:
+			prio = syslog.LOG_WARNING
+		default:
+			prio = syslog.LOG_ERR
+		}
+		w, _ := syslog.New(prio, "")
+		w.Write(byteMessage)
+		w.Close()
+	} else {
+		message := formatTerminal(rMap, data[r])
+		mlog.Printf("%s", message)
+	}
+	mutex.Unlock()
 }
 
-func Log(r *http.Request, values ...interface{}) error {
-	return nil
+func clear(r *http.Request) {
+	mutex.Lock()
+	delete(data, r)
+	mutex.Unlock()
 }
 
-func finilizeRequestLogger(r *http.Request, status int, size int, elapsed time.Duration) {
-	log.Print(r.Context())
-	log.Print(entry.m, status, elapsed)
+func mapify(arr []interface{}) map[string]interface{} {
+	if len(arr)%2 != 0 {
+		// If the given values aren't even remove the last one
+		arr = append(arr[:len(arr)-1], arr[len(arr):]...)
+	}
+	result := make(map[string]interface{})
+	// work the array in pairs.
+	for i := 0; i < len(arr); i += 2 {
+		// unless the first value is a string, dump the pair.
+		v := reflect.TypeOf(arr[i]).Kind()
+		if v == reflect.String {
+			result[arr[i].(string)] = arr[i+1]
+		}
+	}
+	return result
 }
