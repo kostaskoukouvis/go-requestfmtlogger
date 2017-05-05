@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"context"
 	"log"
 	"log/syslog"
 	"net/http"
@@ -12,14 +13,24 @@ import (
 	"github.com/go-stack/stack"
 )
 
+// LoggerConfig contains a boolean that judges whether the
+// logger should write in syslog or not.
 type LoggerConfig struct {
 	SysWrite bool
 }
 
+type contextKey string
+
+type loggerItem struct {
+	sync.RWMutex
+	m      map[string]interface{}
+	url    string
+	method string
+}
+
 var (
-	mlog  *log.Logger
-	mutex sync.RWMutex
-	data  = make(map[*http.Request]map[string]interface{})
+	logCtx = contextKey("reqlogger")
+	mlog   *log.Logger
 )
 
 func init() {
@@ -29,55 +40,48 @@ func init() {
 func (c *LoggerConfig) RequestLogger(next http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 
-		initRequestLogger(r)
+		i := newLoggerItem(r)
 		ww := &responseWriterWrapper{0, 0, w}
 		t1 := time.Now()
-
-		next.ServeHTTP(ww, r)
+		ctx := context.WithValue(r.Context(), logCtx, i)
+		next.ServeHTTP(ww, r.WithContext(ctx))
 
 		t2 := time.Now()
-		finilizeRequestLogger(r, c.SysWrite, ww.Status(), ww.Size(), t2.Sub(t1))
-		clear(r)
+		finilizeRequestLogger(i, c.SysWrite, ww.Status(), ww.Size(), t2.Sub(t1))
 	}
 	return http.HandlerFunc(fn)
 }
 
-func initRequestLogger(r *http.Request) {
-	mutex.Lock()
-	data[r] = make(map[string]interface{})
-	mutex.Unlock()
+func newLoggerItem(r *http.Request) *loggerItem {
+	i := &loggerItem{}
+	i.url = r.URL.String()
+	i.method = r.Method
+	i.m = make(map[string]interface{})
+	return i
 }
 
 func Log(r *http.Request, values ...interface{}) {
-	mutex.Lock()
-	if data[r] == nil {
-		// if the log wasn't initialized, burn it all to hell...
-		return
-	}
+	i, _ := r.Context().Value(logCtx).(*loggerItem)
+	i.Lock()
 	dataMap := mapify(values)
 	for k, v := range dataMap {
-		data[r][k] = v
+		i.m[k] = v
 	}
-	data[r]["file"] = stack.Caller(1)
-	mutex.Unlock()
+	i.m["file"] = stack.Caller(1)
+	i.Unlock()
 }
 
-func finilizeRequestLogger(r *http.Request, sysWrite bool, status int, size int, elapsed time.Duration) {
-	mutex.Lock()
-	if data[r] == nil {
-		// if the log wasn't initialized, burn it all to hell...
-		return
-	}
-
+func finilizeRequestLogger(i *loggerItem, sysWrite bool, status int, size int, elapsed time.Duration) {
+	i.Lock()
 	rMap := make(map[string]interface{})
-	rMap["method"] = r.Method
-	rMap["url"] = r.URL.String()
+	rMap["method"] = i.method
+	rMap["url"] = i.url
 	rMap["status"] = status
 	rMap["size"] = size
 	rMap["duration"] = elapsed
 	// print stuff out
 	if sysWrite {
-		byteMessage := formatSyslog(rMap, data[r])
+		byteMessage := formatSyslog(rMap, i.m)
 		// check status to assume priority
 		var prio syslog.Priority
 		switch {
@@ -92,16 +96,10 @@ func finilizeRequestLogger(r *http.Request, sysWrite bool, status int, size int,
 		w.Write(byteMessage)
 		w.Close()
 	} else {
-		message := formatTerminal(rMap, data[r])
+		message := formatTerminal(rMap, i.m)
 		mlog.Printf("%s", message)
 	}
-	mutex.Unlock()
-}
-
-func clear(r *http.Request) {
-	mutex.Lock()
-	delete(data, r)
-	mutex.Unlock()
+	i.Unlock()
 }
 
 func mapify(arr []interface{}) map[string]interface{} {

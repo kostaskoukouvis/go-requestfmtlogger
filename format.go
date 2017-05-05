@@ -94,7 +94,7 @@ func formatValue(value interface{}) string {
 	case error:
 		return escapeString(v.Error())
 	default:
-		return escapeString(fmt.Sprintf("%v", value))
+		return escapeString(fmt.Sprintf("%+v", value))
 	}
 }
 
