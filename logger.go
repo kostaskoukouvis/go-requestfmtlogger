@@ -60,7 +60,7 @@ func newLoggerItem(r *http.Request) *loggerItem {
 	return i
 }
 
-func Log(r *http.Request, values ...interface{}) {
+func Log(r *http.Request, message string, values ...interface{}) {
 	i, _ := r.Context().Value(logCtx).(*loggerItem)
 	i.Lock()
 	dataMap := mapify(values)
@@ -68,6 +68,7 @@ func Log(r *http.Request, values ...interface{}) {
 		i.m[k] = v
 	}
 	i.m["file"] = stack.Caller(1)
+	i.m["msg"] = message
 	i.Unlock()
 }
 
