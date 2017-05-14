@@ -2,7 +2,7 @@
 
 Generate a log line per each request. Adding to current request loggers with go-requestfmtlogger you can add key-value pairs to the log message at any time during the request.
 
-###Usage
+### Usage
 
 Firstly import the package:
 `import log "github.com/kostaskoukouvis/go-requestfmtlogger"`
@@ -20,9 +20,9 @@ string - value fashion.
 `log.Log(r, "error getting product", "err", err, "product_id", pid)`
 
 
-###Based and inspired from work such as:
+### Based and inspired from work such as:
 * [log15](https://github.com/inconshreveable/log15)
 * [chi-router middleware](https://github.com/pressly/chi)
 
-###Contributors:
+### Credits:
 * [whadron](https://github.com/whadron)
