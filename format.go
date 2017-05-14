@@ -1,6 +1,5 @@
 package logger
 
-// formatValue formats a value for serialization
 import (
 	"bytes"
 	"fmt"
@@ -17,6 +16,7 @@ const (
 	floatFormat    = 'f'
 )
 
+// formatTerminal returns a string formatted for printing in terminal.
 func formatTerminal(reqData map[string]interface{}, userData map[string]interface{}) string {
 	var stringArray []string
 	// Choose the color that suits our status.
@@ -48,6 +48,7 @@ func formatTerminal(reqData map[string]interface{}, userData map[string]interfac
 	return strings.Join(stringArray, " ")
 }
 
+// formatSyslog returns a string formatted for printing on syslog.
 func formatSyslog(reqData map[string]interface{}, userData map[string]interface{}) []byte {
 	var stringArray []string
 	reqString := fmt.Sprintf("%s %s %s %s - %dB | %v",
@@ -65,6 +66,8 @@ func formatSyslog(reqData map[string]interface{}, userData map[string]interface{
 	return []byte(justString)
 }
 
+// formatValue formats a value for serialization.
+// Based on: https://github.com/inconshreveable/log15
 func formatValue(value interface{}) string {
 	if value == nil {
 		return "nil"
@@ -102,7 +105,6 @@ var stringBufPool = sync.Pool{
 	New: func() interface{} { return new(bytes.Buffer) },
 }
 
-// based on
 func escapeString(s string) string {
 	needsQuotes := false
 	needsEscape := false

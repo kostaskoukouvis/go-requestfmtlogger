@@ -19,14 +19,17 @@ type LoggerConfig struct {
 	SysWrite bool
 }
 
-type contextKey string
-
+// loggerItem contains a mutex, the request's url and method,
+// as well as the key-value pair map for all the user
+// specified information.
 type loggerItem struct {
 	sync.RWMutex
 	m      map[string]interface{}
 	url    string
 	method string
 }
+
+type contextKey string
 
 var (
 	logCtx = contextKey("reqlogger")
@@ -37,6 +40,8 @@ func init() {
 	mlog = log.New(os.Stdout, "", 0)
 }
 
+// RequestLogger is the main middleware function. It initializes a newLoggerItem
+// with every new request and finizes it at the end if.
 func (c *LoggerConfig) RequestLogger(next http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 
@@ -52,6 +57,8 @@ func (c *LoggerConfig) RequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(fn)
 }
 
+// newLoggerItem creates a new logger item based on
+// the current request object.
 func newLoggerItem(r *http.Request) *loggerItem {
 	i := &loggerItem{}
 	i.url = r.URL.String()
@@ -60,6 +67,9 @@ func newLoggerItem(r *http.Request) *loggerItem {
 	return i
 }
 
+// Log adds the given message and key-value pairs in the
+// current request's loggerItem. For multiple usability the
+// message key points to an array of messages.
 func Log(r *http.Request, message string, values ...interface{}) {
 	i, _ := r.Context().Value(logCtx).(*loggerItem)
 	i.Lock()
@@ -68,10 +78,15 @@ func Log(r *http.Request, message string, values ...interface{}) {
 		i.m[k] = v
 	}
 	i.m["file"] = stack.Caller(1)
-	i.m["msg"] = message
+	if _, ok := i.m["msg"]; !ok {
+		i.m["msg"] = []string
+	}
+	i.m["msg"] = append(i.m["msg"], message)
 	i.Unlock()
 }
 
+// finilizeRequestLogger formats the loggerItem and outputs it to the selected
+// medium. (terminal or syslog)
 func finilizeRequestLogger(i *loggerItem, sysWrite bool, status int, size int, elapsed time.Duration) {
 	i.Lock()
 	rMap := make(map[string]interface{})
@@ -103,6 +118,9 @@ func finilizeRequestLogger(i *loggerItem, sysWrite bool, status int, size int, e
 	i.Unlock()
 }
 
+// mapify creates a string-interface{} map from the given
+// interface{} array. For simplicity's shake the user
+// just needs to send the key-value pairs as an array.
 func mapify(arr []interface{}) map[string]interface{} {
 	if len(arr)%2 != 0 {
 		// If the given values aren't even remove the last one
