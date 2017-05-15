@@ -68,8 +68,7 @@ func newLoggerItem(r *http.Request) *loggerItem {
 }
 
 // Log adds the given message and key-value pairs in the
-// current request's loggerItem. For multiple usability the
-// message key points to an array of messages.
+// current request's loggerItem.
 func Log(r *http.Request, message string, values ...interface{}) {
 	i, _ := r.Context().Value(logCtx).(*loggerItem)
 	i.Lock()
@@ -78,10 +77,7 @@ func Log(r *http.Request, message string, values ...interface{}) {
 		i.m[k] = v
 	}
 	i.m["file"] = stack.Caller(1)
-	if _, ok := i.m["msg"]; !ok {
-		i.m["msg"] = []string
-	}
-	i.m["msg"] = append(i.m["msg"], message)
+	i.m["msg"] = message
 	i.Unlock()
 }
 
